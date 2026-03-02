@@ -16,6 +16,44 @@ docker run -d -p 9377:9377 --name camofox ghcr.io/redf0x1/camofox-browser:latest
 
 > Don't have Docker? See [CamoFox installation guide](https://github.com/redf0x1/camofox-browser#quick-start-for-agents).
 
+### AI Auto-Setup (Recommended)
+
+Paste this prompt into your AI assistant (Copilot, Claude, Cursor, etc.) and it will set up everything automatically:
+
+<details>
+<summary><b>Copy this prompt</b></summary>
+
+```text
+Set up CamoGemini MCP server for me. Follow these steps:
+
+1. Check if Docker is available. If yes, check if a container named "camofox" is running:
+  - If not running, start it: docker run -d -p 9377:9377 --name camofox ghcr.io/redf0x1/camofox-browser:latest
+  - If already running, skip this step
+
+2. Test CamoFox is reachable:
+  - curl http://localhost:9377/health
+  - If not reachable, wait 5 seconds and retry (CamoFox takes a moment to start)
+
+3. Add the CamoGemini MCP server to my editor config:
+  - For VS Code: create/update .vscode/mcp.json with:
+    {"servers":{"camo-gemini":{"type":"stdio","command":"npx","args":["-y","camo-gemini@latest"],"env":{"CAMOFOX_URL":"http://localhost:9377"}}}}
+  - For Claude Desktop: update ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%\Claude\claude_desktop_config.json (Windows)
+  - For Cursor: update ~/.cursor/mcp.json
+  - For Windsurf: update ~/.codeium/windsurf/mcp_config.json
+  Use "mcpServers" key instead of "servers" for non-VS Code editors (and omit "type":"stdio").
+
+4. After config is saved, tell me to restart my editor to load the new MCP server.
+
+5. Once restarted, verify the setup by calling these MCP tools in order:
+  - gemini_health — should show CamoFox is connected
+  - gemini_login — authenticate with Google (account 0)
+  - gemini_generate with prompt "Say hello" — should return a response
+
+Report the result of each step.
+```
+
+</details>
+
 ### Install
 
 #### Option A: npx (Recommended)
