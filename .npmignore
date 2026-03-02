@@ -1,0 +1,15 @@
+src/
+tests/
+src/__tests__/
+*.test.ts
+*.spec.ts
+tsconfig.json
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+coverage/
+.env
+.env.*
+node_modules

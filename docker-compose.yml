@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  camo-gemini:
+    build: .
+    stdin_open: true
+    environment:
+      - CAMOFOX_HOST=host.docker.internal
+      - CAMOFOX_PORT=9377
+      - CAMOGEMINI_DASHBOARD=true
+      - CAMOGEMINI_DASHBOARD_PORT=9378
+    ports:
+      - "9378:9378"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

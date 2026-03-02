@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "camo-gemini": {
+      "command": "node",
+      "args": ["/Users/admin/DEV/camo-gemini/dist/index.js"],
+      "env": {
+        "CAMOFOX_URL": "http://localhost:9377"
+      }
+    }
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "name": "camo-gemini",
+  "version": "0.1.0",
+  "description": "Gemini AI MCP server — chat, stream, and generate with Google Gemini via anti-detection browser",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "camo-gemini": "dist/index.js",
+    "camo-gemini-setup": "dist/setup.js"
+  },
+  "type": "module",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "setup": "node dist/setup.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "gemini",
+    "google-gemini",
+    "camofox",
+    "camoufox",
+    "ai-agent",
+    "ibpe",
+    "browser-automation",
+    "claude",
+    "cursor",
+    "vscode",
+    "llm-tools"
+  ],
+  "author": "redf0x1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/redf0x1/camo-gemini.git"
+  },
+  "bugs": {
+    "url": "https://github.com/redf0x1/camo-gemini/issues"
+  },
+  "homepage": "https://github.com/redf0x1/camo-gemini#readme",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}
