@@ -1,6 +1,6 @@
 {
   "name": "camo-gemini",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Gemini AI MCP server — chat, stream, and generate with Google Gemini via anti-detection browser",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
