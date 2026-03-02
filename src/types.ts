@@ -183,6 +183,8 @@ export interface GeneratedImage {
   description?: string;
   alt?: string;
   title?: string;
+  base64?: string;
+  mimeType?: string;
 }
 
 export interface UploadOptions {

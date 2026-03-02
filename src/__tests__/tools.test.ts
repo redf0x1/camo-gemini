@@ -344,6 +344,31 @@ describe("Tool Handlers", () => {
 
       expect(deps.generate.deleteConversation).not.toHaveBeenCalled();
     });
+
+    it("should return image content blocks when base64 image data is available", async () => {
+      const deps = createDeps();
+      deps.generate.generateImage.mockResolvedValue({
+        generatedImages: [
+          {
+            url: "https://lh3.googleusercontent.com/gg-dl/test-image",
+            base64: "ZmFrZS1iYXNlNjQ=",
+            mimeType: "image/png"
+          }
+        ],
+        conversationId: "cid-1"
+      });
+      const server = registerAll(deps);
+
+      const handler = server.handlers.get("gemini_generate_image");
+      const result = await handler?.({ prompt: "draw fox" });
+
+      expect(result?.content).toHaveLength(2);
+      expect(result?.content[1]).toEqual({
+        type: "image",
+        data: "ZmFrZS1iYXNlNjQ=",
+        mimeType: "image/png"
+      });
+    });
   });
 
   describe("gemini_list_gems", () => {

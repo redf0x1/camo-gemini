@@ -6,6 +6,8 @@ import { ResponseParser } from "../core/response-parser.js";
 import { StreamParser } from "../core/stream-parser.js";
 import { withFailover } from "../core/failover.js";
 import { withRetry } from "../core/retry.js";
+import { logger } from "../core/logger.js";
+import { downloadImage } from "./image-download.js";
 import type { CamofoxClient } from "../client/camofox-client.js";
 import type { AuthService } from "./auth.js";
 import type { StateManager } from "../state.js";
@@ -130,20 +132,52 @@ export class GenerateService {
         throw error;
       }
 
+      const generatedImages = await Promise.all(
+        parseResult.data.candidates.flatMap((candidate) =>
+          candidate.generatedImages.map(async (image) => {
+            const imageResult = {
+              url: image.url,
+              alt: image.alt,
+              title: image.title,
+              description: image.alt
+            };
+
+            if (!/lh3\.googleusercontent\.com\//.test(image.url)) {
+              return imageResult;
+            }
+
+            const downloaded = await downloadImage(
+              image.url,
+              session.tabId,
+              session.userId,
+              this.deps.client
+            );
+
+            if (!downloaded) {
+              logger.warn("generate", "Image download failed; returning URL only", {
+                accountIndex,
+                tabId: session.tabId,
+                imageUrl: image.url.slice(0, 120)
+              });
+              return imageResult;
+            }
+
+            return {
+              ...imageResult,
+              base64: downloaded.base64,
+              mimeType: downloaded.mimeType
+            };
+          })
+        )
+      );
+
       return {
         output: parseResult.data,
         rawFrameCount: frames.length,
         conversationId: typeof parseResult.data.metadata[0] === "string" && parseResult.data.metadata[0]
           ? parseResult.data.metadata[0]
           : null,
-        generatedImages: parseResult.data.candidates.flatMap((candidate) =>
-          candidate.generatedImages.map((image) => ({
-            url: image.url,
-            alt: image.alt,
-            title: image.title,
-            description: image.alt
-          }))
-        )
+        generatedImages
       };
     }, { maxRetries: 5 });
   }

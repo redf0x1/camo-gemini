@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { okResult, toErrorResult } from "../errors.js";
+import type { ToolResult } from "../errors.js";
 import type { ToolDeps } from "../server.js";
 
 const UploadSchema = z.object({
@@ -72,7 +73,28 @@ export function registerMediaTools(server: McpServer, deps: ToolDeps): void {
           }
         }
 
-        return okResult(result);
+        const imageContent = (result.generatedImages ?? []).flatMap((image) => {
+          if (typeof image.base64 !== "string" || typeof image.mimeType !== "string") {
+            return [];
+          }
+
+          return [{
+            type: "image" as const,
+            data: image.base64,
+            mimeType: image.mimeType
+          }];
+        });
+
+        if (imageContent.length === 0) {
+          return okResult(result);
+        }
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result) },
+            ...imageContent
+          ]
+        } satisfies ToolResult;
       } catch (error) {
         return toErrorResult(error);
       }

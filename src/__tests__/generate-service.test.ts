@@ -116,6 +116,7 @@ function createDeps() {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("GenerateService", () => {
@@ -310,6 +311,58 @@ describe("GenerateService", () => {
     ]);
     expect(deps.auth.ensureSession).toHaveBeenCalledWith(1);
     expect(deps.auth.getTokens).toHaveBeenCalledWith(1);
+  });
+
+  it("generateImage downloads googleusercontent images and enriches response with base64", async () => {
+    const deps = createDeps();
+    deps.client.evaluateExtended
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, data: "frame-data" } })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          ok: true,
+          base64: "ZmFrZS1iYXNlNjQ=",
+          mimeType: "image/png",
+          size: 1024
+        }
+      });
+
+    vi.spyOn(StreamParser.prototype, "extractFrames").mockReturnValue([{}]);
+    vi.spyOn(ResponseParser.prototype, "parseGenerateResponse").mockReturnValue({
+      ok: true,
+      data: {
+        metadata: ["cid-1", "rid-1", "rcid-1", null, null, null, null, null, null, "ctx"],
+        candidates: [
+          {
+            rcid: "rcid-1",
+            text: "Here is your image",
+            thoughts: null,
+            webImages: [],
+            generatedImages: [{ url: "https://lh3.googleusercontent.com/gg-dl/test-image", alt: "generated alt", title: "generated" }],
+            isFinal: true
+          }
+        ],
+        chosenIndex: 0,
+        isCompleted: true
+      }
+    });
+
+    const service = new GenerateService(deps);
+    const result = await service.generateImage("draw a fox", { model: "pro", accountIndex: 1 });
+
+    expect(result.generatedImages).toEqual([
+      {
+        url: "https://lh3.googleusercontent.com/gg-dl/test-image",
+        title: "generated",
+        alt: "generated alt",
+        description: "generated alt",
+        base64: "ZmFrZS1iYXNlNjQ=",
+        mimeType: "image/png"
+      }
+    ]);
+
+    expect(deps.client.evaluateExtended).toHaveBeenCalledTimes(2);
+    expect(deps.client.evaluateExtended).toHaveBeenNthCalledWith(2, "tab-1", expect.any(String), "test-user", 30_000);
   });
 
   it("generateImage forwards gemId and accountIndex options", async () => {
