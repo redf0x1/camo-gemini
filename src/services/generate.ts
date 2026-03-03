@@ -21,6 +21,8 @@ export interface GenerateServiceDeps {
 }
 
 export class GenerateService {
+  private static readonly MAX_ACTION_INPUT_RETRIES = 2;
+
   private readonly streamParser: StreamParser;
 
   private readonly responseParser: ResponseParser;
@@ -119,7 +121,8 @@ export class GenerateService {
         throw new Error(`Gemini fetch failed: ${fetchResult?.error ?? "no data"}`);
       }
 
-      const frames = this.streamParser.extractFrames(fetchResult.data);
+      const rawBody = fetchResult.data;
+      const frames = this.streamParser.extractFrames(rawBody);
       const parseResult = this.responseParser.parseGenerateResponse(frames);
 
       if (!parseResult.ok) {
@@ -142,15 +145,22 @@ export class GenerateService {
               description: image.alt
             };
 
-            if (!/lh3\.googleusercontent\.com\//.test(image.url)) {
+            let host: string;
+            try {
+              host = new URL(image.url).hostname.toLowerCase();
+            } catch {
+              return imageResult;
+            }
+
+            if (host !== "googleusercontent.com" && !host.endsWith(".googleusercontent.com")) {
               return imageResult;
             }
 
             const downloaded = await downloadImage(
+              this.deps.client,
               image.url,
-              session.tabId,
               session.userId,
-              this.deps.client
+              "image-download"
             );
 
             if (!downloaded) {
@@ -255,10 +265,65 @@ export class GenerateService {
     prompt: string,
     options: Omit<GenerateOptions, "prompt" | "usePro"> = {}
   ): Promise<GenerateResult> {
-    return this.generate({
-      prompt,
-      usePro: true,
-      ...options
-    });
+    let currentPrompt = prompt;
+    let lastResult: GenerateResult | null = null;
+
+    for (let attempt = 0; attempt <= GenerateService.MAX_ACTION_INPUT_RETRIES; attempt += 1) {
+      const result = await this.generate({
+        ...options,
+        prompt: currentPrompt,
+        usePro: true,
+        ...(attempt > 0 ? { chatMetadata: undefined } : {})
+      });
+      lastResult = result;
+
+      const actionInputPrompt = this.checkForActionInput(result);
+      if (!actionInputPrompt) {
+        return result;
+      }
+
+      if (attempt >= GenerateService.MAX_ACTION_INPUT_RETRIES) {
+        return result;
+      }
+
+      logger.info("generate", "Retrying image generation with action_input prompt", {
+        attempt: attempt + 1,
+        maxRetries: GenerateService.MAX_ACTION_INPUT_RETRIES,
+        originalPromptLength: currentPrompt.length,
+        simplifiedPromptLength: actionInputPrompt.length
+      });
+
+      const accountIndex = options.accountIndex ?? this.deps.state.activeAccountIndex ?? 0;
+      if (result.conversationId) {
+        try {
+          await this.deleteConversation(accountIndex, result.conversationId);
+        } catch (error) {
+          logger.warn("generate", "Failed to delete intermediate conversation before retry", {
+            accountIndex,
+            conversationId: result.conversationId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      currentPrompt = actionInputPrompt;
+    }
+
+    return lastResult as GenerateResult;
+  }
+
+  private checkForActionInput(result: GenerateResult): string | null {
+    if (result.generatedImages?.some((image) => Boolean(image.base64 || image.url))) {
+      return null;
+    }
+
+    for (const candidate of result.output.candidates) {
+      const extractedPrompt = ResponseParser.extractActionInputPrompt(candidate.text);
+      if (extractedPrompt) {
+        return extractedPrompt;
+      }
+    }
+
+    return null;
   }
 }

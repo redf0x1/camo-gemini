@@ -102,6 +102,10 @@ function createDeps() {
 
   return {
     client: {
+      createTab: vi.fn().mockResolvedValue({ tabId: "download-tab-1", url: "", title: "" }),
+      navigate: vi.fn().mockResolvedValue({ tabId: "download-tab-1", url: "https://lh3.googleusercontent.com/gg-dl/test-image", title: "" }),
+      evaluate: vi.fn().mockResolvedValue({ ok: true, result: { ct: "image/png", body: "" } }),
+      closeTab: vi.fn().mockResolvedValue(undefined),
       evaluateExtended: vi.fn()
     } as any,
     auth: {
@@ -361,8 +365,17 @@ describe("GenerateService", () => {
       }
     ]);
 
+    expect(deps.client.createTab).toHaveBeenCalledWith("about:blank", "test-user", "image-download");
+    expect(deps.client.navigate).toHaveBeenCalledWith("download-tab-1", "https://lh3.googleusercontent.com/gg-dl/test-image=s1024", "test-user");
+    expect(deps.client.evaluate).toHaveBeenCalledWith(
+      "download-tab-1",
+      "({ ct: document.contentType, body: document.body?.innerText?.trim()?.substring(0, 2048) })",
+      "test-user",
+      5_000
+    );
     expect(deps.client.evaluateExtended).toHaveBeenCalledTimes(2);
-    expect(deps.client.evaluateExtended).toHaveBeenNthCalledWith(2, "tab-1", expect.any(String), "test-user", 30_000);
+    expect(deps.client.evaluateExtended).toHaveBeenNthCalledWith(2, "download-tab-1", expect.any(String), "test-user", 15_000);
+    expect(deps.client.closeTab).toHaveBeenCalledWith("download-tab-1", "test-user");
   });
 
   it("generateImage forwards gemId and accountIndex options", async () => {
@@ -385,6 +398,192 @@ describe("GenerateService", () => {
       tokens,
       2
     );
+  });
+
+  it("generateImage throws PARSE_ERROR directly when usePro response has no candidates", async () => {
+    const deps = createDeps();
+    deps.client.evaluateExtended
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, data: "frame-data-1" } });
+
+    vi.spyOn(StreamParser.prototype, "extractFrames").mockReturnValue([{}]);
+    vi.spyOn(ResponseParser.prototype, "parseGenerateResponse")
+      .mockReturnValueOnce({
+        ok: false,
+        error: {
+          code: "PARSE_ERROR",
+          message: "No candidates found in response"
+        }
+      });
+
+    const imageSpy = vi.spyOn(RequestBuilder.prototype, "buildImageGeneratePayload");
+    const standardSpy = vi.spyOn(RequestBuilder.prototype, "buildGeneratePayload");
+
+    const service = new GenerateService(deps);
+    await expect(service.generateImage("draw a fox", { model: "pro", accountIndex: 1 })).rejects.toMatchObject({
+      message: "No candidates found in response",
+      code: "PARSE_ERROR"
+    });
+
+    expect(imageSpy).toHaveBeenCalledTimes(1);
+    expect(standardSpy).not.toHaveBeenCalled();
+    expect(deps.client.evaluateExtended).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries with simplified action_input prompt and then returns generated images", async () => {
+    const deps = createDeps();
+    deps.client.evaluateExtended
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, data: "frame-data-1" } })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, data: "frame-data-2" } });
+
+    vi.spyOn(StreamParser.prototype, "extractFrames").mockReturnValue([{}]);
+    vi.spyOn(ResponseParser.prototype, "parseGenerateResponse")
+      .mockReturnValueOnce({
+        ok: true,
+        data: {
+          metadata: ["cid-1", "rid-1", "rcid-1", null, null, null, null, null, null, "ctx"],
+          candidates: [
+            {
+              rcid: "rcid-1",
+              text: '{"action":"image_generation","action_input":"{\\"prompt\\":\\"A cute cat\\"}"}',
+              thoughts: null,
+              webImages: [],
+              generatedImages: [],
+              isFinal: true
+            }
+          ],
+          chosenIndex: 0,
+          isCompleted: true
+        }
+      })
+      .mockReturnValueOnce({
+        ok: true,
+        data: {
+          metadata: ["cid-2", "rid-2", "rcid-2", null, null, null, null, null, null, "ctx"],
+          candidates: [
+            {
+              rcid: "rcid-2",
+              text: "Here is your image",
+              thoughts: null,
+              webImages: [],
+              generatedImages: [{ url: "https://img.test/generated.png", alt: "generated alt", title: "generated" }],
+              isFinal: true
+            }
+          ],
+          chosenIndex: 0,
+          isCompleted: true
+        }
+      });
+
+    const service = new GenerateService(deps);
+    const deleteSpy = vi.spyOn(service, "deleteConversation").mockResolvedValue(undefined);
+
+    const result = await service.generateImage("complex prompt", { model: "pro", accountIndex: 1 });
+
+    expect(deps.client.evaluateExtended).toHaveBeenCalledTimes(2);
+    expect(result.generatedImages).toHaveLength(1);
+    expect(deleteSpy).toHaveBeenCalledWith(1, "cid-1");
+    const secondExpression = deps.client.evaluateExtended.mock.calls[1]?.[1] as string;
+    expect(secondExpression).toContain("A+cute+cat");
+  });
+
+  it("returns last result when action_input retries are exhausted", async () => {
+    const deps = createDeps();
+    deps.client.evaluateExtended
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, data: "frame-data-1" } })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, data: "frame-data-2" } })
+      .mockResolvedValueOnce({ ok: true, result: { ok: true, data: "frame-data-3" } });
+
+    vi.spyOn(StreamParser.prototype, "extractFrames").mockReturnValue([{}]);
+    vi.spyOn(ResponseParser.prototype, "parseGenerateResponse").mockReturnValue({
+      ok: true,
+      data: {
+        metadata: ["cid-1", "rid-1", "rcid-1", null, null, null, null, null, null, "ctx"],
+        candidates: [
+          {
+            rcid: "rcid-1",
+            text: '{"action":"image_generation","action_input":"A simple tree"}',
+            thoughts: null,
+            webImages: [],
+            generatedImages: [],
+            isFinal: true
+          }
+        ],
+        chosenIndex: 0,
+        isCompleted: true
+      }
+    });
+
+    const service = new GenerateService(deps);
+    vi.spyOn(service, "deleteConversation").mockResolvedValue(undefined);
+
+    const result = await service.generateImage("complex prompt", { model: "pro", accountIndex: 1 });
+
+    expect(deps.client.evaluateExtended).toHaveBeenCalledTimes(3);
+    expect(result.generatedImages).toEqual([]);
+  });
+
+  it("does not retry when action_input text exists but generated images are already present", async () => {
+    const deps = createDeps();
+    deps.client.evaluateExtended.mockResolvedValue({ ok: true, result: { ok: true, data: "frame-data" } });
+
+    vi.spyOn(StreamParser.prototype, "extractFrames").mockReturnValue([{}]);
+    vi.spyOn(ResponseParser.prototype, "parseGenerateResponse").mockReturnValue({
+      ok: true,
+      data: {
+        metadata: ["cid-1", "rid-1", "rcid-1", null, null, null, null, null, null, "ctx"],
+        candidates: [
+          {
+            rcid: "rcid-1",
+            text: '{"action":"image_generation","action_input":"A simple tree"}',
+            thoughts: null,
+            webImages: [],
+            generatedImages: [{ url: "https://img.test/generated.png", alt: "generated alt", title: "generated" }],
+            isFinal: true
+          }
+        ],
+        chosenIndex: 0,
+        isCompleted: true
+      }
+    });
+
+    const service = new GenerateService(deps);
+
+    const result = await service.generateImage("complex prompt", { model: "pro", accountIndex: 1 });
+
+    expect(deps.client.evaluateExtended).toHaveBeenCalledTimes(1);
+    expect(result.generatedImages).toHaveLength(1);
+  });
+
+  it("does not retry for normal responses without action_input", async () => {
+    const deps = createDeps();
+    deps.client.evaluateExtended.mockResolvedValue({ ok: true, result: { ok: true, data: "frame-data" } });
+
+    vi.spyOn(StreamParser.prototype, "extractFrames").mockReturnValue([{}]);
+    vi.spyOn(ResponseParser.prototype, "parseGenerateResponse").mockReturnValue({
+      ok: true,
+      data: {
+        metadata: ["cid-1", "rid-1", "rcid-1", null, null, null, null, null, null, "ctx"],
+        candidates: [
+          {
+            rcid: "rcid-1",
+            text: "Normal response text",
+            thoughts: null,
+            webImages: [],
+            generatedImages: [],
+            isFinal: true
+          }
+        ],
+        chosenIndex: 0,
+        isCompleted: true
+      }
+    });
+
+    const service = new GenerateService(deps);
+
+    const result = await service.generateImage("simple prompt", { model: "pro", accountIndex: 1 });
+
+    expect(deps.client.evaluateExtended).toHaveBeenCalledTimes(1);
+    expect(result.output.candidates[0]?.text).toBe("Normal response text");
   });
 
   it("deleteConversation calls BatchExecute with DELETE_CHAT payload", async () => {
