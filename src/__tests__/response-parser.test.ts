@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { logger } from "../core/logger.js";
 import { ResponseParser } from "../core/response-parser.js";
 import { StreamParser } from "../core/stream-parser.js";
 
@@ -117,6 +118,22 @@ function makeDataFrame(options: {
 
   part[2] = JSON.stringify(inner);
   return part;
+}
+
+function makeGeneratedImageItem(
+  url = "https://example.com/generated.png",
+  alt = "generated alt"
+): unknown[] {
+  const generatedImage: unknown[] = [];
+  const generatedImageUrlNode: unknown[] = [];
+  generatedImageUrlNode[3] = url;
+  generatedImage[0] = [];
+  (generatedImage[0] as unknown[])[3] = generatedImageUrlNode;
+
+  generatedImage[3] = [];
+  (generatedImage[3] as unknown[])[5] = [alt];
+
+  return generatedImage;
 }
 
 function makeFramedRaw(parts: unknown[]): string {
@@ -391,6 +408,114 @@ describe("ResponseParser.parseGenerateResponse", () => {
     ]);
   });
 
+  it("extracts generated images from fallback path [12,7] and logs warning", () => {
+    const parser = new ResponseParser();
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+    const candidate = makeCandidate("r1", "with fallback images");
+    candidate[12] = [];
+    (candidate[12] as unknown[])[7] = [[], makeGeneratedImageItem("https://example.com/generated-fallback-127.png")];
+
+    const frames = [
+      makeDataFrame({
+        candidates: [candidate]
+      })
+    ];
+
+    const result = parser.parseGenerateResponse(frames);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.candidates[0].generatedImages).toEqual([
+      {
+        url: "https://example.com/generated-fallback-127.png",
+        title: "generated",
+        alt: "generated alt"
+      }
+    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "response-parser",
+      "Non-primary generated image path matched",
+      { path: "12.7" }
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("extracts generated images from fallback path [12,0,7,0] and logs warning", () => {
+    const parser = new ResponseParser();
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+    const candidate = makeCandidate("r1", "with fallback images");
+    candidate[12] = [];
+    (candidate[12] as unknown[])[7] = [];
+    (candidate[12] as unknown[])[0] = [];
+    ((candidate[12] as unknown[])[0] as unknown[])[7] = [[
+      makeGeneratedImageItem("https://example.com/generated-fallback-12070.png")
+    ]];
+
+    const frames = [
+      makeDataFrame({
+        candidates: [candidate]
+      })
+    ];
+
+    const result = parser.parseGenerateResponse(frames);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.candidates[0].generatedImages).toEqual([
+      {
+        url: "https://example.com/generated-fallback-12070.png",
+        title: "generated",
+        alt: "generated alt"
+      }
+    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "response-parser",
+      "Non-primary generated image path matched",
+      { path: "12.0.7.0" }
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("extracts generated images from fallback path [12,0,7] and logs warning", () => {
+    const parser = new ResponseParser();
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+    const candidate = makeCandidate("r1", "with fallback images");
+    candidate[12] = [];
+    (candidate[12] as unknown[])[7] = [];
+    (candidate[12] as unknown[])[0] = [];
+    ((candidate[12] as unknown[])[0] as unknown[])[7] = [
+      [],
+      makeGeneratedImageItem("https://example.com/generated-fallback-1207.png")
+    ];
+
+    const frames = [
+      makeDataFrame({
+        candidates: [candidate]
+      })
+    ];
+
+    const result = parser.parseGenerateResponse(frames);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.candidates[0].generatedImages).toEqual([
+      {
+        url: "https://example.com/generated-fallback-1207.png",
+        title: "generated",
+        alt: "generated alt"
+      }
+    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "response-parser",
+      "Non-primary generated image path matched",
+      { path: "12.0.7" }
+    );
+    warnSpy.mockRestore();
+  });
+
   it("extracts thoughts when present", () => {
     const parser = new ResponseParser();
     const frames = [
@@ -455,6 +580,27 @@ describe("ResponseParser.parseGenerateResponse", () => {
     expect(result.data.candidates[0].rcid).toBe("r2");
     expect(result.data.candidates[0].text).toBe("valid candidate");
   });
+
+  it("parses candidates from alternate nested path used by some image responses", () => {
+    const parser = new ResponseParser();
+    const candidate = makeCandidate("r-alt", "image response candidate");
+    const frame: unknown[] = [];
+    const inner: unknown[] = [];
+    const nested0: unknown[] = [];
+    const nested00: unknown[] = [];
+    nested00[3] = [candidate];
+    nested0[0] = nested00;
+    inner[0] = nested0;
+    frame[2] = JSON.stringify(inner);
+
+    const result = parser.parseGenerateResponse([frame]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.candidates).toHaveLength(1);
+    expect(result.data.candidates[0].rcid).toBe("r-alt");
+    expect(result.data.candidates[0].text).toBe("image response candidate");
+  });
 });
 
 describe("ResponseParser.parseBatchResponse", () => {
@@ -518,6 +664,108 @@ describe("ResponseParser.parseBatchResponse", () => {
   });
 });
 
+describe("ResponseParser.extractGeneratedImagesFromText", () => {
+  it("extracts a single image_collection URL and cleans text", () => {
+    const parser = new ResponseParser();
+    const text =
+      "Before http://googleusercontent.com/image_collection/image_retrieval/12345_0 After";
+
+    const result = (parser as unknown as {
+      extractGeneratedImagesFromText: (value: string) => {
+        generatedImages: Array<{ url: string; title: string }>;
+        cleanedText: string;
+      };
+    }).extractGeneratedImagesFromText(text);
+
+    expect(result.generatedImages).toEqual([
+      {
+        url: "http://googleusercontent.com/image_collection/image_retrieval/12345_0",
+        title: "generated"
+      }
+    ]);
+    expect(result.cleanedText).toBe("Before  After");
+  });
+
+  it("extracts multiple image_collection URLs", () => {
+    const parser = new ResponseParser();
+    const text =
+      "A https://googleusercontent.com/image_collection/image_retrieval/111_0 B http://googleusercontent.com/image_collection/image_retrieval/222_1 C";
+
+    const result = (parser as unknown as {
+      extractGeneratedImagesFromText: (value: string) => {
+        generatedImages: Array<{ url: string; title: string }>;
+        cleanedText: string;
+      };
+    }).extractGeneratedImagesFromText(text);
+
+    expect(result.generatedImages).toEqual([
+      {
+        url: "https://googleusercontent.com/image_collection/image_retrieval/111_0",
+        title: "generated"
+      },
+      {
+        url: "http://googleusercontent.com/image_collection/image_retrieval/222_1",
+        title: "generated"
+      }
+    ]);
+    expect(result.cleanedText).toBe("A  B  C");
+  });
+
+  it("returns no images and unchanged text when no URL matches", () => {
+    const parser = new ResponseParser();
+    const text = "No image links in this response";
+
+    const result = (parser as unknown as {
+      extractGeneratedImagesFromText: (value: string) => {
+        generatedImages: Array<{ url: string; title: string }>;
+        cleanedText: string;
+      };
+    }).extractGeneratedImagesFromText(text);
+
+    expect(result.generatedImages).toEqual([]);
+    expect(result.cleanedText).toBe(text);
+  });
+
+  it("removes URL while preserving surrounding text", () => {
+    const parser = new ResponseParser();
+    const text =
+      "prefix\nhttp://googleusercontent.com/image_collection/image_retrieval/98765_0\nsuffix";
+
+    const result = (parser as unknown as {
+      extractGeneratedImagesFromText: (value: string) => {
+        generatedImages: Array<{ url: string; title: string }>;
+        cleanedText: string;
+      };
+    }).extractGeneratedImagesFromText(text);
+
+    expect(result.generatedImages).toHaveLength(1);
+    expect(result.cleanedText).toBe("prefix\n\nsuffix");
+  });
+
+  it("populates generatedImages from text-only fallback in parseGenerateResponse", () => {
+    const parser = new ResponseParser();
+    const fallbackUrl =
+      "http://googleusercontent.com/image_collection/image_retrieval/12345_0";
+    const frames = [
+      makeDataFrame({
+        candidates: [makeCandidate("r-text-fallback", `Here is your image ${fallbackUrl} enjoy!`)]
+      })
+    ];
+
+    const result = parser.parseGenerateResponse(frames);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.candidates[0].generatedImages).toEqual([
+      {
+        url: fallbackUrl,
+        title: "generated"
+      }
+    ]);
+    expect(result.data.candidates[0].text).toBe("Here is your image  enjoy!");
+  });
+});
+
 describe("StreamParser + ResponseParser integration", () => {
   it("extracts frames and parses model output end-to-end", () => {
     const streamParser = new StreamParser();
@@ -538,5 +786,61 @@ describe("StreamParser + ResponseParser integration", () => {
     expect(parsed.data.metadata[0]).toBe("cid-int");
     expect(parsed.data.candidates[0].text).toBe("Integrated response");
     expect(parsed.data.isCompleted).toBe(true);
+  });
+});
+
+describe("ResponseParser.extractActionInputPrompt", () => {
+  it("extracts prompt from Python dict action_input", () => {
+    const text = '{"action":"image_generation","action_input":"{\'prompt\':\'A cute cat\'}"}';
+
+    const result = ResponseParser.extractActionInputPrompt(text);
+
+    expect(result).toBe("A cute cat");
+  });
+
+  it("extracts prompt from JSON dict action_input", () => {
+    const text = '{"action":"image_generation","action_input":"{\\"prompt\\":\\"A red car\\"}"}';
+
+    const result = ResponseParser.extractActionInputPrompt(text);
+
+    expect(result).toBe("A red car");
+  });
+
+  it("falls back to raw action_input string", () => {
+    const text = '{"action":"image_generation","action_input":"A simple tree"}';
+
+    const result = ResponseParser.extractActionInputPrompt(text);
+
+    expect(result).toBe("A simple tree");
+  });
+
+  it("returns null for non-matching text", () => {
+    expect(ResponseParser.extractActionInputPrompt("Hello world")).toBeNull();
+  });
+
+  it("returns null for non-image_generation action", () => {
+    const text = '{"action":"web_search","action_input":"query"}';
+
+    expect(ResponseParser.extractActionInputPrompt(text)).toBeNull();
+  });
+
+  it("returns null for empty text", () => {
+    expect(ResponseParser.extractActionInputPrompt("")).toBeNull();
+  });
+
+  it("returns null for malformed JSON", () => {
+    expect(ResponseParser.extractActionInputPrompt("{bad json")).toBeNull();
+  });
+
+  it("returns null for empty action_input", () => {
+    const text = '{"action":"image_generation","action_input":""}';
+
+    expect(ResponseParser.extractActionInputPrompt(text)).toBeNull();
+  });
+
+  it("returns null for non-string action_input", () => {
+    const text = '{"action":"image_generation","action_input":42}';
+
+    expect(ResponseParser.extractActionInputPrompt(text)).toBeNull();
   });
 });
