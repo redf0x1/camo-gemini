@@ -9,31 +9,59 @@ import type {
 } from "../types.js";
 import type { GenerateService } from "./generate.js";
 
+interface ChatQueue {
+  valid: boolean;
+  accountIndex: number;
+  accounts: Set<number>;
+  tail?: Promise<ChatResult>;
+}
+
 export class ChatService {
   private sessions = new Map<string, ChatSessionState>();
-  private chatLocks = new Map<string, Promise<ChatResult>>();
+  private chatQueues = new Map<string, ChatQueue>();
 
   constructor(private generateService: GenerateService) {}
 
   async chat(sessionId: string, prompt: string, options: ChatOptions = {}): Promise<ChatResult> {
-    const inflight = this.chatLocks.get(sessionId);
-    if (inflight) {
-      return inflight;
+    let queue = this.chatQueues.get(sessionId);
+    if (!queue) {
+      queue = {
+        valid: true,
+        accountIndex: this.sessions.get(sessionId)?.accountIndex ?? 0,
+        accounts: new Set<number>()
+      };
+      this.chatQueues.set(sessionId, queue);
     }
-
-    const promise = this._doChat(sessionId, prompt, options).finally(() => {
-      this.chatLocks.delete(sessionId);
+    const currentQueue = queue;
+    const accountIndex = options.accountIndex ?? currentQueue.accountIndex;
+    currentQueue.accountIndex = accountIndex;
+    currentQueue.accounts.add(accountIndex);
+    const prev = currentQueue.tail ?? Promise.resolve();
+    const next = prev
+      .catch(() => {})
+      .then(() => {
+        if (!currentQueue.valid) {
+          throw Object.assign(new Error("Chat session was cleared before this request started"), {
+            code: "CHAT_SESSION_NOT_FOUND"
+          });
+        }
+        return this._doChat(sessionId, prompt, { ...options, accountIndex }, currentQueue);
+      });
+    currentQueue.tail = next;
+    return next.finally(() => {
+      if (currentQueue.tail === next && this.chatQueues.get(sessionId) === currentQueue) {
+        this.chatQueues.delete(sessionId);
+      }
     });
-    this.chatLocks.set(sessionId, promise);
-    return promise;
   }
 
-  private async _doChat(sessionId: string, prompt: string, options: ChatOptions = {}): Promise<ChatResult> {
+  private async _doChat(sessionId: string, prompt: string, options: ChatOptions, queue: ChatQueue): Promise<ChatResult> {
     const now = Date.now();
     let session = this.sessions.get(sessionId);
-    const isNewSession = !session;
+    const accountIndex = options.accountIndex ?? session?.accountIndex ?? 0;
+    const isNewSession = !session || session.accountIndex !== accountIndex;
 
-    if (!session) {
+    if (!session || session.accountIndex !== accountIndex) {
       session = {
         id: sessionId,
         cid: "",
@@ -41,7 +69,7 @@ export class ChatService {
         rcid: "",
         context: "",
         model: options.model,
-        accountIndex: options.accountIndex ?? 0,
+        accountIndex,
         gemId: options.gemId,
         turns: [],
         createdAt: now,
@@ -50,7 +78,6 @@ export class ChatService {
     }
 
     const model = options.model ?? session.model;
-    const accountIndex = options.accountIndex ?? session.accountIndex;
     const gemId = options.gemId ?? session.gemId;
 
     const chatMetadata: ChatMetadata = isNewSession
@@ -65,27 +92,29 @@ export class ChatService {
       gemId
     });
 
-    if (isNewSession) {
-      this.generateService.resetReqId();
-      this.sessions.set(sessionId, session);
-    }
-
-    session.model = model;
-    session.accountIndex = accountIndex;
-    session.gemId = gemId;
-    this.applyMetadataUpdate(session, generated.output);
-
-    session.turns.push({
-      prompt,
-      response: generated.output,
-      timestamp: now
-    });
-    session.updatedAt = now;
-
     const primaryIndex = generated.output.chosenIndex >= 0 && generated.output.chosenIndex < generated.output.candidates.length
       ? generated.output.chosenIndex
       : 0;
     const primaryCandidate = generated.output.candidates[primaryIndex];
+
+    if (queue.valid) {
+      if (isNewSession) {
+        this.generateService.resetReqId();
+        this.sessions.set(sessionId, session);
+      }
+
+      session.model = model;
+      session.accountIndex = accountIndex;
+      session.gemId = gemId;
+      this.applyMetadataUpdate(session, generated.output);
+
+      session.turns.push({
+        prompt,
+        response: generated.output,
+        timestamp: now
+      });
+      session.updatedAt = now;
+    }
 
     return {
       text: primaryCandidate?.text ?? "",
@@ -111,16 +140,28 @@ export class ChatService {
   }
 
   deleteSession(sessionId: string): boolean {
-    return this.sessions.delete(sessionId);
+    const hadQueue = this.invalidateQueue(sessionId);
+    return this.sessions.delete(sessionId) || hadQueue;
   }
 
   clearAll(): void {
+    for (const sessionId of this.chatQueues.keys()) {
+      this.invalidateQueue(sessionId);
+    }
     this.sessions.clear();
   }
 
   clearAccount(accountIndex: number): void {
     for (const [sessionId, session] of this.sessions.entries()) {
       if (session.accountIndex === accountIndex) {
+        this.invalidateQueue(sessionId);
+        this.sessions.delete(sessionId);
+      }
+    }
+    // Include first turns that have not produced a saved session yet.
+    for (const [sessionId, queue] of this.chatQueues) {
+      if (queue.accounts.has(accountIndex)) {
+        this.invalidateQueue(sessionId);
         this.sessions.delete(sessionId);
       }
     }
@@ -178,5 +219,13 @@ export class ChatService {
         session.rcid = metadataRcid;
       }
     }
+  }
+
+  private invalidateQueue(sessionId: string): boolean {
+    const queue = this.chatQueues.get(sessionId);
+    if (!queue) return false;
+    queue.valid = false;
+    this.chatQueues.delete(sessionId);
+    return true;
   }
 }

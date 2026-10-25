@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.2] - 2026-10-25
+
+### Fixed
+- Process distinct concurrent prompts for one chat session in order instead of returning the first prompt's result to every caller.
+- Cancel queued work when local sessions/accounts are cleared and prevent in-flight results from recreating cleared local history. Independent accounts/sessions remain isolated.
+- Parse newline-delimited RPC responses while preserving RPC envelopes for generation and batch-response parsing; retain framed and direct-JSON compatibility.
+- Return the existing friendly parse-error message and advertise the package's actual version in MCP initialization.
+- Preserve the published 15-tool contract and existing account/profile namespace. Clarify that `gemini_stream` is a buffered compatibility alias, not incremental streaming.
+
 ## [0.2.1] - 2026-10-25
 
 ### Fixed

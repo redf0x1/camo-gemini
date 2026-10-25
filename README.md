@@ -201,7 +201,7 @@ Report pass/fail for each step.
 5. `gemini_generate` — Text generation (with auto-delete)
 6. `gemini_generate_image` — Image generation (with multi-account failover + auto-delete)
 7. `gemini_chat` — Multi-turn chat conversation
-8. `gemini_stream` — Streaming text generation (with auto-delete)
+8. `gemini_stream` — Legacy buffered text-generation alias (with auto-delete; not incremental streaming)
 9. `gemini_list_gems` — List all Gems (custom + system)
 10. `gemini_create_gem` — Create a custom Gem
 11. `gemini_update_gem` — Update an existing Gem
@@ -247,6 +247,14 @@ MCP Client -> CamoGemini -> CamoFox Browser -> Gemini Web APIs
 - No direct Gemini HTTP client libraries in CamoGemini
 
 ## Auto-Delete Chat Behavior
+
+Calls to `gemini_chat` with the same `sessionId` are processed in order; different
+sessions can run independently. Clearing a local session/account cancels its
+queued calls and prevents late results from restoring cleared local state.
+An explicit account change starts fresh conversation metadata rather than carrying
+the previous account's conversation into the new account.
+Already-invoked generation may still finish; this is not provider-side cancellation
+or deletion of Gemini history.
 
 - One-shot tools (`gemini_generate`, `gemini_stream`, `gemini_generate_image`) auto-delete conversations by default
 - Per-call override: pass `autoDelete: false`

@@ -96,6 +96,17 @@ function registerAll(deps: any): MockMcpServer {
 }
 
 describe("Tool Handlers", () => {
+  it("retains the published 15-tool contract and buffered gemini_stream alias", async () => {
+    const deps = createDeps();
+    const server = registerAll(deps);
+    expect(server.handlers.size).toBe(15);
+    const handler = server.handlers.get("gemini_stream");
+    expect(handler).toBeDefined();
+    const result = await handler!({ prompt: "compatibility", accountIndex: 2 });
+    expect(parseTextResult(result)).toEqual({ text: "hello" });
+    expect(deps.generate.deleteConversation).toHaveBeenCalledWith(2, "cid-1");
+  });
+
   describe("gemini_generate", () => {
     it("should return text content on success", async () => {
       const deps = createDeps();

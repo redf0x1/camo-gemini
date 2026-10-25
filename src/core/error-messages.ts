@@ -73,6 +73,11 @@ const errorCatalog: Record<string, FriendlyError> = {
     message: "Received unexpected response from Gemini",
     suggestion: "This may be a temporary issue. Try again in a few seconds."
   },
+  PARSE_ERROR: {
+    code: "PARSE_ERROR",
+    message: "Failed to parse Gemini response — response format may have changed",
+    suggestion: "Try again. If persistent, the Gemini API response format may have changed. Check for updates."
+  },
   CHAT_SESSION_NOT_FOUND: {
     code: "CHAT_SESSION_NOT_FOUND",
     message: "Chat session not found",

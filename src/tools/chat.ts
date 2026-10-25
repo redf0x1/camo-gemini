@@ -57,7 +57,7 @@ export function registerChatTools(server: McpServer, deps: ToolDeps): void {
 
   server.tool(
     "gemini_stream",
-    "Stream text generation",
+    "Legacy buffered text-generation alias; returns a complete response, not incremental streaming",
     {
       prompt: z.string().min(1).describe("Prompt text to send to Gemini"),
       model: z.string().optional().describe("Optional Gemini model name or alias"),

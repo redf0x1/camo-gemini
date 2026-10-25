@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createRequire } from "node:module";
 
 import { CamofoxClient } from "./client/camofox-client.js";
 import { AccountService } from "./services/account.js";
@@ -17,6 +18,8 @@ import { registerHealthTools } from "./tools/health.js";
 import { logger } from "./core/logger.js";
 import { registerMediaTools } from "./tools/media.js";
 import type { Config } from "./types.js";
+
+const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 export interface ToolDeps {
   client: CamofoxClient;
@@ -54,7 +57,7 @@ export function createServer(config: Config): {
 
   const server = new McpServer({
     name: "camo-gemini",
-    version: "0.1.0"
+    version
   });
 
   const deps: ToolDeps = { client, config, state, auth, accountService, generate, chat, upload, gems, health };

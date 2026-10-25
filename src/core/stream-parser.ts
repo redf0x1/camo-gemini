@@ -20,9 +20,40 @@ export class StreamParser {
 
     try {
       const parsed = JSON.parse(content.trim()) as unknown;
-      return Array.isArray(parsed) ? parsed : [parsed];
+      const direct: unknown[] = [];
+      this.appendFrames(direct, parsed);
+      return direct;
     } catch {
-      return [];
+      return this.parseNdjson(content);
+    }
+  }
+
+  private parseNdjson(content: string): unknown[] {
+    const frames: unknown[] = [];
+
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        this.appendFrames(frames, parsed);
+      } catch {
+        continue;
+      }
+    }
+
+    return frames;
+  }
+
+  private appendFrames(frames: unknown[], parsed: unknown): void {
+    // A flat RPC envelope is one frame, not a list of its scalar fields.
+    if (Array.isArray(parsed) && parsed[0] !== "wrb.fr") {
+      frames.push(...parsed);
+    } else {
+      frames.push(parsed);
     }
   }
 
@@ -65,11 +96,7 @@ export class StreamParser {
 
       try {
         const parsed = JSON.parse(chunk) as unknown;
-        if (Array.isArray(parsed)) {
-          frames.push(...parsed);
-        } else {
-          frames.push(parsed);
-        }
+        this.appendFrames(frames, parsed);
       } catch {
         continue;
       }

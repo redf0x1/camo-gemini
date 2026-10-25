@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { StreamParser } from "../core/stream-parser.js";
+import { ResponseParser } from "../core/response-parser.js";
 
 function frame(payload: string): string {
   return `${payload.length}${payload}`;
@@ -146,6 +147,41 @@ describe("StreamParser", () => {
       const parser = new StreamParser();
 
       expect(parser.extractFrames("not-json and not-framed")).toEqual([]);
+    });
+
+    it("falls back to NDJSON parsing when framed and direct JSON parsing fail", () => {
+      const parser = new StreamParser();
+      const ndjson = [
+        "[\"wrb.fr\",\"ESY5D\",\"{}\"]",
+        "{\"status\":\"ok\"}"
+      ].join("\n");
+
+      expect(parser.extractFrames(ndjson)).toEqual([
+        ["wrb.fr", "ESY5D", "{}"],
+        { status: "ok" }
+      ]);
+    });
+
+    it.each(["direct", "framed", "ndjson"])("keeps a flat RPC envelope usable by batch parsing: %s", (format: string) => {
+      const rpc = ["wrb.fr", "fixture-rpc", JSON.stringify({ value: 42 })];
+      const encoded = JSON.stringify(rpc);
+      const raw = format === "direct" ? encoded
+        : format === "framed" ? frame(encoded)
+        : `${encoded}\n${JSON.stringify({ status: "ok" })}`;
+      const parsed = new ResponseParser().parseBatchResponse(new StreamParser().extractFrames(raw), "fixture-rpc");
+      expect(parsed).toEqual({ ok: true, data: { value: 42 } });
+    });
+
+    it.each([false, true])("parses NDJSON generation through the actual response parser (nested batch=%s)", (nested: boolean) => {
+      const inner = [null, ["cid-fixture", "rid-fixture"], null, null, [["rcid-fixture", ["Unicode 雪 response"]]]];
+      const rpc = ["wrb.fr", "fixture-generate", JSON.stringify(inner)];
+      const raw = `)]}'\n${JSON.stringify(nested ? [rpc] : rpc)}\ninvalid-line\n${JSON.stringify({ status: "done" })}`;
+      const result = new ResponseParser().parseGenerateResponse(new StreamParser().extractFrames(raw));
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.candidates[0]?.text).toBe("Unicode 雪 response");
+        expect(result.data.metadata.slice(0, 2)).toEqual(["cid-fixture", "rid-fixture"]);
+      }
     });
 
     it("parses real-world-like multiple frames", () => {

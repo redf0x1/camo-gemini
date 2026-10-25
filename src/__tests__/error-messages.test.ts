@@ -44,6 +44,7 @@ describe("error-messages", () => {
       "ALL_ACCOUNTS_UNHEALTHY",
       "NETWORK_ERROR",
       "INVALID_RESPONSE",
+      "PARSE_ERROR",
       "CHAT_SESSION_NOT_FOUND",
       "GEM_NOT_FOUND"
     ];
