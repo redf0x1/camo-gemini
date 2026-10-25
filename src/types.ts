@@ -117,6 +117,8 @@ export interface GenerateRequest {
 
 export interface GenerateOptions {
   prompt: string;
+  /** Chat pins its account; one-shot generation permits failover by default. */
+  allowAccountFailover?: boolean;
   model?: string;
   accountIndex?: number;
   chatMetadata?: ChatMetadata;

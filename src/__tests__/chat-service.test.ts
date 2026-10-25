@@ -78,6 +78,7 @@ describe("ChatService", () => {
       prompt: "hello",
       model: "flash",
       accountIndex: 2,
+      allowAccountFailover: false,
       chatMetadata: [...NEW_CHAT_METADATA],
       gemId: "gem-1"
     });
@@ -114,6 +115,7 @@ describe("ChatService", () => {
       prompt: "second",
       model: "flash",
       accountIndex: 0,
+      allowAccountFailover: false,
       chatMetadata: ["cid-A", "rid-A", "rcid-A", null, null, null, null, null, null, "ctx-A"],
       gemId: undefined
     });
@@ -249,6 +251,7 @@ describe("ChatService", () => {
       prompt: "second s1",
       model: undefined,
       accountIndex: 0,
+      allowAccountFailover: false,
       chatMetadata: ["cid-1", "rid-1", "rcid-1", null, null, null, null, null, null, "ctx-1"],
       gemId: undefined
     });
@@ -294,6 +297,7 @@ describe("ChatService", () => {
       prompt: "second",
       model: undefined,
       accountIndex: 0,
+      allowAccountFailover: false,
       chatMetadata: ["cid-queue", "rid-1", "rcid-1", null, null, null, null, null, null, "ctx-1"],
       gemId: undefined
     });
@@ -343,6 +347,7 @@ describe("ChatService", () => {
       prompt: "will-pass",
       model: undefined,
       accountIndex: 0,
+      allowAccountFailover: false,
       chatMetadata: [...NEW_CHAT_METADATA],
       gemId: undefined
     });
@@ -502,6 +507,28 @@ describe("ChatService", () => {
     expect(service.getSession("queued-account")?.turns).toHaveLength(2);
   });
 
+  it("does not clear a new account's conversation after the old account's work settled", async () => {
+    const { service, generate } = createChatService();
+    const held = createDeferred<{ output: ModelOutput; rawFrameCount: number }>();
+    generate.mockResolvedValueOnce({ output: createOutput(), rawFrameCount: 1 })
+      .mockResolvedValueOnce({ output: createOutput({ cid: "new-account-cid" }), rawFrameCount: 1 })
+      .mockImplementationOnce(() => held.promise)
+      .mockResolvedValueOnce({ output: createOutput({ cid: "new-account-cid" }), rawFrameCount: 1 });
+    const first = service.chat("switch-logout", "old-account", { accountIndex: 0 });
+    const second = service.chat("switch-logout", "new-account", { accountIndex: 1 });
+    const third = service.chat("switch-logout", "pending", { accountIndex: 1 });
+    const fourth = service.chat("switch-logout", "queued", { accountIndex: 1 });
+    await Promise.all([first, second]);
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+    expect(service.getSession("switch-logout")?.accountIndex).toBe(1);
+    service.clearAccount(0);
+    held.resolve({ output: createOutput({ cid: "new-account-cid" }), rawFrameCount: 1 });
+    await Promise.all([third, fourth]);
+    expect(generate).toHaveBeenCalledTimes(4);
+    expect(service.getSession("switch-logout")?.accountIndex).toBe(1);
+    expect(service.getSession("switch-logout")?.turns.map(t => t.prompt)).toEqual(["new-account", "pending", "queued"]);
+  });
+
   it("never carries conversation metadata into a different queued account", async () => {
     const { service, generate } = createChatService();
     generate.mockResolvedValue({ output: createOutput({ cid: "account-cid" }), rawFrameCount: 1 });
@@ -511,6 +538,7 @@ describe("ChatService", () => {
     ]);
     expect(generate.mock.calls[1]?.[0]).toMatchObject({
       accountIndex: 2,
+      allowAccountFailover: false,
       chatMetadata: [...NEW_CHAT_METADATA]
     });
     expect(results[1]).toMatchObject({ isNewSession: true, turnNumber: 1 });

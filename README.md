@@ -253,6 +253,9 @@ sessions can run independently. Clearing a local session/account cancels its
 queued calls and prevents late results from restoring cleared local state.
 An explicit account change starts fresh conversation metadata rather than carrying
 the previous account's conversation into the new account.
+Multi-turn chat stays pinned to its selected account; choose a different account
+explicitly to start fresh metadata. One-shot text/image generation retains automatic
+account failover.
 Already-invoked generation may still finish; this is not provider-side cancellation
 or deletion of Gemini history.
 

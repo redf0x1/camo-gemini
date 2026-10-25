@@ -3,10 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatFriendlyError } from "../core/error-messages.js";
 import { withFailover } from "../core/failover.js";
 import { AccountService } from "../services/account.js";
-import { ChatService } from "../services/chat.js";
+
 import { HealthService } from "../services/health.js";
 import { StateManager } from "../state.js";
-import type { Config, GeminiSession, ModelOutput } from "../types.js";
+import { createServer } from "../server.js";
+import type { Config, GenerateOptions, GenerateResult, GeminiSession, ModelOutput } from "../types.js";
 
 const config: Config = {
   camofoxUrl: "http://localhost:9377",
@@ -49,6 +50,19 @@ function createOutput(text: string): ModelOutput {
     chosenIndex: 0,
     isCompleted: true
   };
+}
+
+function createChatBoundaryFixture() {
+  const app = createServer(config);
+  for (const index of [0, 1]) {
+    app.state.addAccount(index, `camo-gemini-test-acct${index}`);
+    app.state.setSession(index, createSession(index));
+  }
+  const closeTab = vi.spyOn(app.client, "closeTab").mockResolvedValue(undefined);
+  const generation = vi.spyOn(app.deps.generate as unknown as {
+    generateForAccount: (options: GenerateOptions, accountIndex: number) => Promise<GenerateResult>;
+  }, "generateForAccount");
+  return { app, closeTab, generation };
 }
 
 afterEach(() => {
@@ -177,22 +191,41 @@ describe("Failover Integration", () => {
   });
 
   it("should not failover chat operations", async () => {
-    const generate = {
-      generate: vi.fn(async () => {
-        const error = new Error("rate limited") as Error & { code?: string };
-        error.code = "RATE_LIMITED";
-        throw error;
-      }),
-      resetReqId: vi.fn()
-    } as any;
+    const { app, generation } = createChatBoundaryFixture();
+    generation.mockImplementation(async (_options, accountIndex) => {
+      if (accountIndex === 0) throw Object.assign(new Error("rate limited"), { code: "RATE_LIMITED" });
+      return { output: createOutput("one-shot fallback"), rawFrameCount: 1 };
+    });
+    try {
+      await expect(app.deps.chat.chat("s1", "chat", { accountIndex: 0 })).rejects.toThrow("rate limited");
+      expect(generation.mock.calls.map(([, index]) => index)).toEqual([0]);
+      expect(app.deps.chat.getSession("s1")).toBeUndefined();
+      // Exercise the actual GenerateService/withFailover path, not a mock generate().
+      const result = await app.deps.generate.generate({ prompt: "one-shot", accountIndex: 0 });
+      expect(result.output.candidates[0]?.text).toBe("one-shot fallback");
+      expect(generation.mock.calls.map(([, index]) => index)).toEqual([0, 0, 1]);
+    } finally { app.shutdown(); }
+  });
 
-    const chat = new ChatService(generate);
-
-    await expect(chat.chat("s1", "hello", { accountIndex: 0 })).rejects.toThrow("rate limited");
-    expect(generate.generate).toHaveBeenCalledTimes(1);
-    expect(generate.generate).toHaveBeenCalledWith(
-      expect.objectContaining({ accountIndex: 0, prompt: "hello" })
-    );
+  it("actual logout fences pending and queued chat for its pinned account", async () => {
+    const { app, generation, closeTab } = createChatBoundaryFixture();
+    let resolve!: (value: GenerateResult) => void;
+    const held = new Promise<GenerateResult>(done => { resolve = done; });
+    generation.mockImplementation(() => held);
+    try {
+      const active = app.deps.chat.chat("logout-pending", "active", { accountIndex: 1 });
+      await vi.waitFor(() => expect(generation).toHaveBeenCalledTimes(1));
+      const queued = app.deps.chat.chat("logout-pending", "queued");
+      const canceled = expect(queued).rejects.toMatchObject({ code: "CHAT_SESSION_NOT_FOUND" });
+      await app.deps.auth.logout(1);
+      expect(closeTab).toHaveBeenCalledWith("tab-1", "camo-gemini-test-acct1");
+      resolve({ output: createOutput("late account-1 result"), rawFrameCount: 1 });
+      await active;
+      await canceled;
+      expect(generation).toHaveBeenCalledTimes(1);
+      expect(app.deps.chat.getSession("logout-pending")).toBeUndefined();
+      expect(app.state.getSession(1)).toBeNull();
+    } finally { app.shutdown(); }
   });
 });
 

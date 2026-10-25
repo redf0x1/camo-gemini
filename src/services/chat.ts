@@ -12,7 +12,7 @@ import type { GenerateService } from "./generate.js";
 interface ChatQueue {
   valid: boolean;
   accountIndex: number;
-  accounts: Set<number>;
+  accounts: Map<number, number>;
   tail?: Promise<ChatResult>;
 }
 
@@ -28,14 +28,14 @@ export class ChatService {
       queue = {
         valid: true,
         accountIndex: this.sessions.get(sessionId)?.accountIndex ?? 0,
-        accounts: new Set<number>()
+        accounts: new Map<number, number>()
       };
       this.chatQueues.set(sessionId, queue);
     }
     const currentQueue = queue;
     const accountIndex = options.accountIndex ?? currentQueue.accountIndex;
     currentQueue.accountIndex = accountIndex;
-    currentQueue.accounts.add(accountIndex);
+    currentQueue.accounts.set(accountIndex, (currentQueue.accounts.get(accountIndex) ?? 0) + 1);
     const prev = currentQueue.tail ?? Promise.resolve();
     const next = prev
       .catch(() => {})
@@ -49,6 +49,9 @@ export class ChatService {
       });
     currentQueue.tail = next;
     return next.finally(() => {
+      const remaining = (currentQueue.accounts.get(accountIndex) ?? 1) - 1;
+      if (remaining === 0) currentQueue.accounts.delete(accountIndex);
+      else currentQueue.accounts.set(accountIndex, remaining);
       if (currentQueue.tail === next && this.chatQueues.get(sessionId) === currentQueue) {
         this.chatQueues.delete(sessionId);
       }
@@ -88,6 +91,7 @@ export class ChatService {
       prompt,
       model,
       accountIndex,
+      allowAccountFailover: false,
       chatMetadata,
       gemId
     });

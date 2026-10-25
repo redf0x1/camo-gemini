@@ -40,7 +40,7 @@ export class GenerateService {
   async generate(options: GenerateOptions): Promise<GenerateResult> {
     const accountIndex = this.resolveAccountIndex(options.accountIndex);
 
-    if (this.deps.state.getAllAccounts().length <= 1) {
+    if (options.allowAccountFailover === false || this.deps.state.getAllAccounts().length <= 1) {
       return this.generateForAccount(options, accountIndex);
     }
 
