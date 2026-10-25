@@ -4,6 +4,7 @@
 
 ### Fixed
 - Include the required `userId` JSON body when closing a browser tab, while preserving the existing encoded tab path, ownership query, and API-key authentication.
+- Update the MCP SDK to 1.32.2, Zod to 4.6.7, and affected transitive dependencies to patched same-major releases. Production dependency audit reports no known vulnerabilities.
 
 ## [0.1.0] - 2026-03-02
 
