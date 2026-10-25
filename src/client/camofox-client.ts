@@ -112,7 +112,8 @@ export class CamofoxClient {
 
   async closeTab(tabId: string, userId: string): Promise<void> {
     await this.requestNoContent(`/tabs/${encodeURIComponent(tabId)}?userId=${encodeURIComponent(userId)}`, {
-      method: "DELETE"
+      method: "DELETE",
+      body: JSON.stringify({ userId })
     });
   }
 

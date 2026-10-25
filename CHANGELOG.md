@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1] - 2026-10-25
+
+### Fixed
+- Include the required `userId` JSON body when closing a browser tab, while preserving the existing encoded tab path, ownership query, and API-key authentication.
+
 ## [0.1.0] - 2026-03-02
 
 ### Added
